@@ -191,9 +191,9 @@ pub fn render_status_bar(frame: &mut Frame, app: &App) {
 
     // Status bar
     let help = match app.active_panel {
-        Panel::CommitList => " j/k: navigate  Tab: files  g/G: first/last  q: quit",
-        Panel::FileList => " j/k: navigate  Tab: diff  Esc: commits  g/G: first/last  q: quit",
-        Panel::Diff => " j/k: scroll  PgUp/PgDn: page  g/G: top/bottom  Tab/Esc: back to files",
+        Panel::CommitList => " j/k: navigate  J/K: scroll diff  Enter/Tab: files  PgDn/PgUp: page  q: quit",
+        Panel::FileList => " j/k: navigate  J/K: scroll diff  Enter/Tab: diff  Esc: commits  q: quit",
+        Panel::Diff => " j/k: scroll  PgUp/PgDn: page  g/G: top/bottom  Tab/Esc: files",
     };
 
     let description = app

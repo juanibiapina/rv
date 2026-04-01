@@ -96,7 +96,7 @@ fn run_app(
                     continue;
                 }
 
-                match app.handle_key(key.code) {
+                match app.handle_key_event(key) {
                     Action::Quit => break,
                     Action::SelectCommit(idx) => {
                         if let Some(commit) = app.commits.get(idx) {

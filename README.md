@@ -32,7 +32,9 @@ Opens a three-panel view showing recent commits. Select a commit to see its chan
 | `k` / `Up` | Previous commit |
 | `g` / `Home` | First commit |
 | `G` / `End` | Last commit |
-| `Tab` | Switch to file list |
+| `J` / `K` | Scroll diff down / up |
+| `PgDn` / `PgUp` | Page down / up |
+| `Enter` / `Tab` | Switch to file list |
 | `q` / `Esc` | Quit |
 
 ### File list
@@ -43,9 +45,11 @@ Opens a three-panel view showing recent commits. Select a commit to see its chan
 | `k` / `Up` | Previous file |
 | `g` / `Home` | First file |
 | `G` / `End` | Last file |
-| `Enter` | Toggle expand/collapse directory |
+| `J` / `K` | Scroll diff down / up |
+| `PgDn` / `PgUp` | Page down / up |
+| `Enter` | Expand/collapse directory, or open diff |
 | `Tab` | Switch to diff panel |
-| `Esc` | Back to commit list |
+| `Shift+Tab` / `Esc` | Back to commit list |
 | `q` | Quit |
 
 ### Diff panel
@@ -56,6 +60,5 @@ Opens a three-panel view showing recent commits. Select a commit to see its chan
 | `k` / `Up` | Scroll up |
 | `g` / `Home` | Top |
 | `G` / `End` | Bottom |
-| `PgUp` | Page up |
-| `PgDn` | Page down |
-| `Tab` / `Esc` | Back to file list |
+| `PgDn` / `PgUp` | Page down / up |
+| `Shift+Tab` / `Tab` / `Esc` | Back to file list |
