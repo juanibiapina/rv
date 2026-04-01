@@ -1,0 +1,138 @@
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
+use ratatui::Frame;
+
+use crate::app::{App, Panel};
+use crate::git::FileStatus;
+
+pub fn render(frame: &mut Frame, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(frame.area());
+
+    render_file_list(frame, app, chunks[0]);
+    render_diff(frame, app, chunks[1]);
+}
+
+fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
+    let is_focused = app.active_panel == Panel::FileList;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let title = format!(" Files ({}) ", app.files.len());
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    let items: Vec<ListItem> = app
+        .files
+        .iter()
+        .enumerate()
+        .map(|(i, file)| {
+            let status_color = match file.status {
+                FileStatus::Added => Color::Green,
+                FileStatus::Modified => Color::Yellow,
+                FileStatus::Deleted => Color::Red,
+            };
+
+            let is_selected = i == app.file_scroll.cursor;
+            let style = if is_selected {
+                Style::default()
+                    .bg(Color::DarkGray)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            let line = Line::from(vec![
+                Span::styled(format!("{} ", file.status), Style::default().fg(status_color)),
+                Span::styled(&file.path, style),
+            ]);
+
+            ListItem::new(line).style(style)
+        })
+        .collect();
+
+    let list = List::new(items).block(block);
+    frame.render_widget(list, area);
+}
+
+fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
+    let is_focused = app.active_panel == Panel::Diff;
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let title = if let Some(file) = app.selected_file() {
+        format!(" {} ", file.path)
+    } else {
+        " Diff ".to_string()
+    };
+
+    let block = Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(border_style);
+
+    if let Some(ref content) = app.diff_content {
+        let paragraph = Paragraph::new(content.clone())
+            .block(block)
+            .scroll((app.diff_scroll.cursor as u16, 0));
+        frame.render_widget(paragraph, area);
+    } else {
+        let paragraph = Paragraph::new("No file selected")
+            .block(block)
+            .style(Style::default().fg(Color::DarkGray));
+        frame.render_widget(paragraph, area);
+    }
+}
+
+/// Render a single-line status bar at the bottom.
+pub fn render_status_bar(frame: &mut Frame, app: &App) {
+    let area = frame.area();
+    if area.height < 3 {
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(1)])
+        .split(area);
+
+    // Re-render main content in the top area
+    let main_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(chunks[0]);
+
+    render_file_list(frame, app, main_chunks[0]);
+    render_diff(frame, app, main_chunks[1]);
+
+    // Status bar
+    let help = match app.active_panel {
+        Panel::FileList => " j/k: navigate  Tab: switch to diff  g/G: first/last  q: quit",
+        Panel::Diff => " j/k: scroll  PgUp/PgDn: page  g/G: top/bottom  Tab/Esc: back to files",
+    };
+
+    let status = Paragraph::new(Line::from(vec![
+        Span::styled(
+            format!(" {} ", app.description),
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(help, Style::default().fg(Color::DarkGray)),
+    ]));
+
+    frame.render_widget(status, chunks[1]);
+}
