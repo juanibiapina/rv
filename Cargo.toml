@@ -1,0 +1,18 @@
+[package]
+name = "rv"
+version = "0.1.0"
+edition = "2021"
+description = "Git diff viewer TUI"
+authors = ["Juan Ibiapina <juanibiapina@gmail.com>"]
+license = "MIT"
+
+[[bin]]
+name = "rv"
+path = "src/main.rs"
+
+[dependencies]
+ansi-to-tui = "8"
+clap = { version = "4", features = ["derive"] }
+crossterm = "0.29"
+ratatui = "0.30"
+thiserror = "2"
