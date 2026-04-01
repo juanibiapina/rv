@@ -33,12 +33,7 @@ fn run() -> Result<(), Error> {
         ));
     }
 
-    let (diff_args, description) = git::compute_diff_args()?;
-    let files = git::changed_files(&diff_args)?;
-
-    if files.is_empty() {
-        return Err(Error::Git("no changes to review".into()));
-    }
+    let commits = git::load_commits(300)?;
 
     // Set up terminal
     enable_raw_mode().map_err(|e| Error::Git(format!("terminal: {}", e)))?;
@@ -49,7 +44,7 @@ fn run() -> Result<(), Error> {
         Terminal::new(backend).map_err(|e| Error::Git(format!("terminal: {}", e)))?;
 
     // Run the app (restore terminal on any exit path)
-    let result = run_app(&mut terminal, files, diff_args, description);
+    let result = run_app(&mut terminal, commits);
 
     // Restore terminal
     disable_raw_mode().ok();
@@ -61,15 +56,17 @@ fn run() -> Result<(), Error> {
 
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    files: Vec<git::FileEntry>,
-    diff_args: Vec<String>,
-    description: String,
+    commits: Vec<git::Commit>,
 ) -> Result<(), Error> {
-    let mut app = App::new(files, description);
+    let mut app = App::new(commits);
 
-    // Load diff for the first file immediately
-    if app.selected_file().is_some() {
-        load_diff_for_selected(&mut app, &diff_args)?;
+    // Load files for the first commit
+    if let Some(commit) = app.selected_commit() {
+        let diff_args = commit.diff_args();
+        let files = git::changed_files(&diff_args)?;
+        if let Some(_entry_idx) = app.set_commit_files(files) {
+            load_diff_for_selected(&mut app)?;
+        }
     }
 
     loop {
@@ -81,6 +78,7 @@ fn run_app(
         } else {
             1
         };
+        app.commit_scroll.visible_rows = visible;
         app.file_scroll.visible_rows = visible;
         app.diff_scroll.visible_rows = visible;
 
@@ -100,8 +98,17 @@ fn run_app(
 
                 match app.handle_key(key.code) {
                     Action::Quit => break,
+                    Action::SelectCommit(idx) => {
+                        if let Some(commit) = app.commits.get(idx) {
+                            let diff_args = commit.diff_args();
+                            let files = git::changed_files(&diff_args)?;
+                            if let Some(_entry_idx) = app.set_commit_files(files) {
+                                load_diff_for_selected(&mut app)?;
+                            }
+                        }
+                    }
                     Action::LoadDiff(_idx) => {
-                        load_diff_for_selected(&mut app, &diff_args)?;
+                        load_diff_for_selected(&mut app)?;
                     }
                     Action::Render | Action::None => {}
                 }
@@ -112,10 +119,14 @@ fn run_app(
     Ok(())
 }
 
-fn load_diff_for_selected(app: &mut App, diff_args: &[String]) -> Result<(), Error> {
+fn load_diff_for_selected(app: &mut App) -> Result<(), Error> {
+    let diff_args = match app.selected_commit() {
+        Some(commit) => commit.diff_args(),
+        None => return Ok(()),
+    };
     if let Some(file) = app.selected_file() {
         let path = file.path.clone();
-        let raw = git::file_diff_with_delta(diff_args, &path)?;
+        let raw = git::file_diff_with_delta(&diff_args, &path)?;
 
         let text = raw
             .into_text()

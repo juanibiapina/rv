@@ -1,6 +1,6 @@
 # rv
 
-Git diff viewer TUI. Split-pane interface with a file list on the left and delta-rendered diffs on the right.
+Git commit browser TUI. Three-panel interface: commit list, file tree, and delta-rendered diffs.
 
 ## Requirements
 
@@ -14,15 +14,26 @@ cargo install --path .
 
 ## Usage
 
-Run `rv` in any git repository with changes:
+Run `rv` in any git repository:
 
 ```
 rv
 ```
 
-If the working tree is dirty, it shows uncommitted changes (staged + unstaged). If clean, it diffs against the auto-detected base branch.
+Opens a three-panel view showing recent commits. Select a commit to see its changed files, select a file to see its diff.
 
 ## Keybindings
+
+### Commit list
+
+| Key | Action |
+|-----|--------|
+| `j` / `Down` | Next commit |
+| `k` / `Up` | Previous commit |
+| `g` / `Home` | First commit |
+| `G` / `End` | Last commit |
+| `Tab` | Switch to file list |
+| `q` / `Esc` | Quit |
 
 ### File list
 
@@ -34,7 +45,8 @@ If the working tree is dirty, it shows uncommitted changes (staged + unstaged). 
 | `G` / `End` | Last file |
 | `Enter` | Toggle expand/collapse directory |
 | `Tab` | Switch to diff panel |
-| `q` / `Esc` | Quit |
+| `Esc` | Back to commit list |
+| `q` | Quit |
 
 ### Diff panel
 
