@@ -1,10 +1,6 @@
 # rv
 
-Code review TUI. Two-panel interface: file tree and delta-rendered diffs for working tree changes.
-
-## Requirements
-
-- [delta](https://github.com/dandavison/delta) for diff rendering
+Code review TUI. Two-panel interface: file tree and side-by-side diffs for working tree changes.
 
 ## Install
 

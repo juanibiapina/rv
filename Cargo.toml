@@ -11,7 +11,6 @@ name = "rv"
 path = "src/main.rs"
 
 [dependencies]
-ansi-to-tui = "8"
 clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 ratatui = "0.30"

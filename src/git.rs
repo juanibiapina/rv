@@ -81,36 +81,18 @@ pub fn changed_files(diff_args: &[String]) -> Result<Vec<FileEntry>, Error> {
     Ok(parse_name_status(&text))
 }
 
-/// Get the raw diff for a single file, rendered through delta.
-pub fn file_diff_with_delta(diff_args: &[String], file_path: &str) -> Result<Vec<u8>, Error> {
-    let mut git_args: Vec<String> = diff_args.to_vec();
-    git_args.push("--".into());
-    git_args.push(file_path.into());
+/// Get the raw unified diff for a single file.
+pub fn file_diff(diff_args: &[String], file_path: &str) -> Result<String, Error> {
+    let mut args: Vec<&str> = diff_args.iter().map(|s| s.as_str()).collect();
+    args.push("--");
+    args.push(file_path);
 
-    let escaped_args: Vec<String> = git_args
-        .iter()
-        .map(|a| format!("'{}'", a.replace('\'', "'\\''")))
-        .collect();
-    let cmd = format!(
-        "git {} | delta --no-gitconfig --paging=never",
-        escaped_args.join(" ")
-    );
-
-    let output = Command::new("bash")
-        .args(["-c", &cmd])
+    let output = Command::new("git")
+        .args(&args)
         .output()
-        .map_err(|e| Error::Git(format!("failed to run delta: {}", e)))?;
+        .map_err(|e| Error::Git(format!("failed to run git diff: {}", e)))?;
 
-    Ok(output.stdout)
-}
-
-/// Check if delta is available.
-pub fn has_delta() -> bool {
-    Command::new("delta")
-        .arg("--version")
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 #[cfg(test)]

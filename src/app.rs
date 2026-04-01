@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use ratatui::text::Text;
 
+use crate::diff::SideBySideDiff;
 use crate::git::FileEntry;
 use crate::scroll::ScrollState;
 use crate::tree::{FileTree, VisibleItem, VisibleItemKind};
@@ -19,7 +19,7 @@ pub enum Action {
     LoadDiff(usize),
 }
 
-pub struct App<'a> {
+pub struct App {
     pub diff_args: Vec<String>,
     pub files: Vec<FileEntry>,
     pub tree: FileTree,
@@ -27,12 +27,11 @@ pub struct App<'a> {
     pub file_scroll: ScrollState,
     pub diff_scroll: ScrollState,
     pub active_panel: Panel,
-    pub diff_content: Option<Text<'a>>,
-    pub diff_line_count: usize,
+    pub diff_content: Option<SideBySideDiff>,
     last_selected_file: Option<usize>,
 }
 
-impl<'a> App<'a> {
+impl App {
     pub fn new(files: Vec<FileEntry>, diff_args: Vec<String>) -> Self {
         let tree = FileTree::build(&files);
         let visible_items = tree.visible_items(&files);
@@ -53,9 +52,13 @@ impl<'a> App<'a> {
             },
             active_panel: Panel::FileList,
             diff_content: None,
-            diff_line_count: 0,
             last_selected_file: None,
         }
+    }
+
+    /// Number of rows in the current diff content.
+    pub fn diff_row_count(&self) -> usize {
+        self.diff_content.as_ref().map_or(0, |d| d.rows.len())
     }
 
     pub fn selected_file(&self) -> Option<&FileEntry> {
@@ -66,9 +69,8 @@ impl<'a> App<'a> {
         }
     }
 
-    pub fn set_diff_content(&mut self, content: Text<'a>, line_count: usize) {
+    pub fn set_diff_content(&mut self, content: SideBySideDiff) {
         self.diff_content = Some(content);
-        self.diff_line_count = line_count;
         self.diff_scroll.reset();
     }
 
@@ -124,7 +126,7 @@ impl<'a> App<'a> {
                 Action::Render
             }
             KeyCode::Char('J') => {
-                self.diff_scroll.down(self.diff_line_count);
+                self.diff_scroll.down(self.diff_row_count());
                 Action::Render
             }
             KeyCode::Char('K') => {
@@ -151,7 +153,7 @@ impl<'a> App<'a> {
                 Action::Render
             }
             KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down => {
-                self.diff_scroll.down(self.diff_line_count);
+                self.diff_scroll.down(self.diff_row_count());
                 Action::Render
             }
             KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up => {
@@ -163,11 +165,11 @@ impl<'a> App<'a> {
                 Action::Render
             }
             KeyCode::Char('G') | KeyCode::End => {
-                self.diff_scroll.last(self.diff_line_count);
+                self.diff_scroll.last(self.diff_row_count());
                 Action::Render
             }
             KeyCode::PageDown => {
-                self.diff_scroll.page_down(self.diff_line_count);
+                self.diff_scroll.page_down(self.diff_row_count());
                 Action::Render
             }
             KeyCode::PageUp => {
@@ -193,7 +195,6 @@ impl<'a> App<'a> {
             } else {
                 // Moved to a directory — clear diff
                 self.diff_content = None;
-                self.diff_line_count = 0;
             }
         }
         Action::Render
@@ -203,10 +204,30 @@ impl<'a> App<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::diff::{SideBySideDiff, SideBySideRow, SideContent, RowKind};
     use crate::git::FileStatus;
 
     fn dummy_diff_args() -> Vec<String> {
         vec!["diff".into(), "--no-ext-diff".into()]
+    }
+
+    /// Create a dummy diff with the given number of rows.
+    fn dummy_diff(row_count: usize) -> SideBySideDiff {
+        let rows = (0..row_count)
+            .map(|i| SideBySideRow::Line {
+                left: Some(SideContent {
+                    lineno: i + 1,
+                    content: format!("line {}", i + 1),
+                    kind: RowKind::Context,
+                }),
+                right: Some(SideContent {
+                    lineno: i + 1,
+                    content: format!("line {}", i + 1),
+                    kind: RowKind::Context,
+                }),
+            })
+            .collect();
+        SideBySideDiff { rows }
     }
 
     // Tree structure for sample_files():
@@ -231,7 +252,7 @@ mod tests {
         ]
     }
 
-    fn app_with_files() -> App<'static> {
+    fn app_with_files() -> App {
         App::new(sample_files(), dummy_diff_args())
     }
 
@@ -317,7 +338,7 @@ mod tests {
     #[test]
     fn tab_switches_to_diff_when_content_loaded() {
         let mut app = app_with_files();
-        app.set_diff_content(Text::raw("diff"), 1);
+        app.set_diff_content(dummy_diff(1));
         let action = app.handle_key(KeyCode::Tab);
         assert_eq!(action, Action::Render);
         assert_eq!(app.active_panel, Panel::Diff);
@@ -379,7 +400,7 @@ mod tests {
         let mut app = app_with_files();
         app.file_scroll.visible_rows = 10;
         app.handle_key(KeyCode::Char('j')); // cursor to file
-        app.set_diff_content(Text::raw("diff"), 1);
+        app.set_diff_content(dummy_diff(1));
         let action = app.handle_key(KeyCode::Enter);
         assert_eq!(action, Action::Render);
         assert_eq!(app.active_panel, Panel::Diff);
@@ -416,7 +437,7 @@ mod tests {
         let mut app = app_with_files();
         app.file_scroll.visible_rows = 10;
         app.handle_key(KeyCode::Char('j')); // cursor 1, loads diff
-        app.set_diff_content(Text::raw("diff"), 1);
+        app.set_diff_content(dummy_diff(1));
         assert!(app.diff_content.is_some());
         app.handle_key(KeyCode::Char('k')); // cursor 0, directory
         assert!(app.diff_content.is_none());
@@ -435,7 +456,7 @@ mod tests {
     #[test]
     fn file_list_shift_j_scrolls_diff() {
         let mut app = app_with_files();
-        app.set_diff_content(Text::raw("line1\nline2\nline3"), 3);
+        app.set_diff_content(dummy_diff(3));
         app.diff_scroll.visible_rows = 10;
         let action = app.handle_key(KeyCode::Char('J'));
         assert_eq!(action, Action::Render);
@@ -468,7 +489,7 @@ mod tests {
     #[test]
     fn diff_panel_tab_returns_to_file_list() {
         let mut app = app_with_files();
-        app.set_diff_content(Text::raw("diff"), 1);
+        app.set_diff_content(dummy_diff(1));
         app.active_panel = Panel::Diff;
         let action = app.handle_key(KeyCode::Tab);
         assert_eq!(action, Action::Render);
@@ -478,7 +499,7 @@ mod tests {
     #[test]
     fn diff_panel_j_scrolls() {
         let mut app = app_with_files();
-        app.set_diff_content(Text::raw("line1\nline2\nline3"), 3);
+        app.set_diff_content(dummy_diff(3));
         app.diff_scroll.visible_rows = 2;
         app.active_panel = Panel::Diff;
         let action = app.handle_key(KeyCode::Char('j'));
@@ -516,7 +537,7 @@ mod tests {
         let mut app = app_with_files();
         app.diff_scroll.cursor = 10;
         app.diff_scroll.offset = 5;
-        app.set_diff_content(Text::raw("new"), 1);
+        app.set_diff_content(dummy_diff(1));
         assert_eq!(app.diff_scroll.cursor, 0);
         assert_eq!(app.diff_scroll.offset, 0);
     }

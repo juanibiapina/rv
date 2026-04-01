@@ -1,7 +1,6 @@
 use std::io;
 use std::time::Duration;
 
-use ansi_to_tui::IntoText;
 use crossterm::event::{self, Event, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{
@@ -11,6 +10,7 @@ use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
 use rv::app::{Action, App};
+use rv::diff;
 use rv::error::Error;
 use rv::git;
 
@@ -25,12 +25,6 @@ fn run() -> Result<(), Error> {
     // Precondition checks
     if !git::is_git_repo() {
         return Err(Error::Git("not a git repository".into()));
-    }
-
-    if !git::has_delta() {
-        return Err(Error::Git(
-            "delta is required but not found. Install with: brew install git-delta".into(),
-        ));
     }
 
     let diff_args = git::worktree_diff_args();
@@ -60,7 +54,7 @@ fn run_app(
     files: Vec<git::FileEntry>,
     diff_args: Vec<String>,
 ) -> Result<(), Error> {
-    let mut app = App::new(files, diff_args);
+    let mut app: App = App::new(files, diff_args);
 
     // Load diff for the initially selected file (if any)
     load_diff_for_selected(&mut app)?;
@@ -108,14 +102,9 @@ fn run_app(
 fn load_diff_for_selected(app: &mut App) -> Result<(), Error> {
     if let Some(file) = app.selected_file() {
         let path = file.path.clone();
-        let raw = git::file_diff_with_delta(&app.diff_args, &path)?;
-
-        let text = raw
-            .into_text()
-            .unwrap_or_else(|_| ratatui::text::Text::raw(String::from_utf8_lossy(&raw).into_owned()));
-
-        let line_count = text.lines.len();
-        app.set_diff_content(text, line_count);
+        let raw = git::file_diff(&app.diff_args, &path)?;
+        let parsed = diff::parse_side_by_side(&raw);
+        app.set_diff_content(parsed);
     }
     Ok(())
 }
