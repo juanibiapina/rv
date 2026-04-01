@@ -3,8 +3,6 @@ use std::process::Command;
 
 use crate::error::Error;
 
-const EMPTY_TREE_HASH: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum FileStatus {
     Added,
@@ -60,79 +58,9 @@ pub fn is_git_repo() -> bool {
         .unwrap_or(false)
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Commit {
-    pub hash: String,
-    pub subject: String,
-    pub parent_hash: Option<String>,
-}
-
-impl Commit {
-    /// Returns git arguments to diff this commit against its parent.
-    pub fn diff_args(&self) -> Vec<String> {
-        let parent = self
-            .parent_hash
-            .as_deref()
-            .unwrap_or(EMPTY_TREE_HASH);
-        vec![
-            "diff".into(),
-            parent.into(),
-            self.hash.clone(),
-            "--no-ext-diff".into(),
-        ]
-    }
-
-    /// Returns the first 7 characters of the commit hash.
-    pub fn short_hash(&self) -> &str {
-        &self.hash[..7.min(self.hash.len())]
-    }
-}
-
-/// Parse `git log` output with tab-separated fields: hash, parents, subject.
-pub fn parse_log(output: &str) -> Vec<Commit> {
-    output
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            if line.is_empty() {
-                return None;
-            }
-            let mut parts = line.splitn(3, '\t');
-            let hash = parts.next()?.trim().to_string();
-            let parents_str = parts.next()?.trim();
-            let subject = parts.next()?.trim().to_string();
-            let parent_hash = parents_str
-                .split_whitespace()
-                .next()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-            Some(Commit {
-                hash,
-                subject,
-                parent_hash,
-            })
-        })
-        .collect()
-}
-
-/// Load recent commits from the repository.
-pub fn load_commits(limit: usize) -> Result<Vec<Commit>, Error> {
-    let output = Command::new("git")
-        .args([
-            "log",
-            &format!("--max-count={}", limit),
-            "--pretty=format:%H\t%P\t%s",
-        ])
-        .output()
-        .map_err(|e| Error::Git(format!("failed to run git: {}", e)))?;
-
-    // git log exits non-zero on empty repos — that's not an error for us
-    if !output.status.success() {
-        return Ok(Vec::new());
-    }
-
-    let text = String::from_utf8_lossy(&output.stdout);
-    Ok(parse_log(&text))
+/// Returns diff args for the working tree (unstaged changes).
+pub fn worktree_diff_args() -> Vec<String> {
+    vec!["diff".into(), "--no-ext-diff".into()]
 }
 
 /// Get the list of changed files using the given diff args.
@@ -283,83 +211,6 @@ mod tests {
                 status: FileStatus::Added,
             }]
         );
-    }
-
-    #[test]
-    fn parse_log_multiple_commits() {
-        let output = "abc1234\tdef5678\tfirst commit\nghi9012\tabc1234\tsecond commit\n";
-        let commits = parse_log(output);
-        assert_eq!(commits.len(), 2);
-        assert_eq!(commits[0].hash, "abc1234");
-        assert_eq!(commits[0].parent_hash, Some("def5678".into()));
-        assert_eq!(commits[0].subject, "first commit");
-        assert_eq!(commits[1].hash, "ghi9012");
-        assert_eq!(commits[1].parent_hash, Some("abc1234".into()));
-        assert_eq!(commits[1].subject, "second commit");
-    }
-
-    #[test]
-    fn parse_log_empty() {
-        assert_eq!(parse_log(""), Vec::<Commit>::new());
-    }
-
-    #[test]
-    fn parse_log_single_commit() {
-        let output = "abc1234\tdef5678\tonly commit";
-        let commits = parse_log(output);
-        assert_eq!(commits.len(), 1);
-        assert_eq!(commits[0].hash, "abc1234");
-    }
-
-    #[test]
-    fn parse_log_initial_commit() {
-        let output = "abc1234\t\tinitial commit\n";
-        let commits = parse_log(output);
-        assert_eq!(commits.len(), 1);
-        assert_eq!(commits[0].parent_hash, None);
-    }
-
-    #[test]
-    fn parse_log_no_trailing_newline() {
-        let output = "abc1234\tdef5678\tsome commit";
-        let commits = parse_log(output);
-        assert_eq!(commits.len(), 1);
-        assert_eq!(commits[0].subject, "some commit");
-    }
-
-    #[test]
-    fn parse_log_merge_commit() {
-        let output = "abc1234\tparent1 parent2\tmerge branch\n";
-        let commits = parse_log(output);
-        assert_eq!(commits.len(), 1);
-        assert_eq!(commits[0].parent_hash, Some("parent1".into()));
-    }
-
-    #[test]
-    fn commit_diff_args_normal() {
-        let commit = Commit {
-            hash: "abc1234".into(),
-            subject: "test".into(),
-            parent_hash: Some("def5678".into()),
-        };
-        assert_eq!(
-            commit.diff_args(),
-            vec!["diff", "def5678", "abc1234", "--no-ext-diff"]
-        );
-    }
-
-    #[test]
-    fn commit_diff_args_initial() {
-        let commit = Commit {
-            hash: "abc1234".into(),
-            subject: "initial".into(),
-            parent_hash: None,
-        };
-        let args = commit.diff_args();
-        assert_eq!(args[0], "diff");
-        assert_eq!(args[1], EMPTY_TREE_HASH);
-        assert_eq!(args[2], "abc1234");
-        assert_eq!(args[3], "--no-ext-diff");
     }
 
     #[test]
