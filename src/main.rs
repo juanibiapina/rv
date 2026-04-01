@@ -80,20 +80,30 @@ fn run_app(
             .draw(|frame| rv::ui::render_status_bar(frame, &app))
             .map_err(|e| Error::Git(format!("render: {}", e)))?;
 
-        // Poll for events
+        // Wait for at least one event, then drain all pending events before rendering
         if event::poll(Duration::from_millis(100))
             .map_err(|e| Error::Git(format!("event: {}", e)))?
         {
-            if let Event::Key(key) = event::read().map_err(|e| Error::Git(format!("event: {}", e)))? {
-                // Only handle key press events, not release
-                if key.kind != KeyEventKind::Press {
-                    continue;
+            let mut quit = false;
+            loop {
+                if let Event::Key(key) =
+                    event::read().map_err(|e| Error::Git(format!("event: {}", e)))?
+                {
+                    if key.kind == KeyEventKind::Press {
+                        if app.handle_key_event(key) == Action::Quit {
+                            quit = true;
+                            break;
+                        }
+                    }
                 }
-
-                match app.handle_key_event(key) {
-                    Action::Quit => break,
-                    Action::Render | Action::None => {}
+                if !event::poll(Duration::ZERO)
+                    .map_err(|e| Error::Git(format!("event: {}", e)))?
+                {
+                    break;
                 }
+            }
+            if quit {
+                break;
             }
         }
     }
