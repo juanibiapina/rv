@@ -68,7 +68,7 @@ fn parse_hunk_header(line: &str) -> Option<(usize, usize)> {
 }
 
 /// Parse unified diff output into a list of DiffLines with line numbers.
-fn parse_lines(input: &str) -> Vec<(DiffLineKind, DiffLine)> {
+fn parse_lines(input: &str) -> Vec<DiffLine> {
     let mut result = Vec::new();
     let mut old_lineno: usize = 0;
     let mut new_lineno: usize = 0;
@@ -80,15 +80,12 @@ fn parse_lines(input: &str) -> Vec<(DiffLineKind, DiffLine)> {
             new_lineno = new_start;
             in_hunk = true;
             // Push a sentinel so we know where hunks start
-            result.push((
-                DiffLineKind::Context,
-                DiffLine {
-                    kind: DiffLineKind::Context,
-                    content: String::new(),
-                    old_lineno: None,
-                    new_lineno: None,
-                },
-            ));
+            result.push(DiffLine {
+                kind: DiffLineKind::Context,
+                content: String::new(),
+                old_lineno: None,
+                new_lineno: None,
+            });
             continue;
         }
 
@@ -102,38 +99,29 @@ fn parse_lines(input: &str) -> Vec<(DiffLineKind, DiffLine)> {
         }
 
         if let Some(content) = line.strip_prefix(' ') {
-            result.push((
-                DiffLineKind::Context,
-                DiffLine {
-                    kind: DiffLineKind::Context,
-                    content: content.to_string(),
-                    old_lineno: Some(old_lineno),
-                    new_lineno: Some(new_lineno),
-                },
-            ));
+            result.push(DiffLine {
+                kind: DiffLineKind::Context,
+                content: content.to_string(),
+                old_lineno: Some(old_lineno),
+                new_lineno: Some(new_lineno),
+            });
             old_lineno += 1;
             new_lineno += 1;
         } else if let Some(content) = line.strip_prefix('-') {
-            result.push((
-                DiffLineKind::Deleted,
-                DiffLine {
-                    kind: DiffLineKind::Deleted,
-                    content: content.to_string(),
-                    old_lineno: Some(old_lineno),
-                    new_lineno: None,
-                },
-            ));
+            result.push(DiffLine {
+                kind: DiffLineKind::Deleted,
+                content: content.to_string(),
+                old_lineno: Some(old_lineno),
+                new_lineno: None,
+            });
             old_lineno += 1;
         } else if let Some(content) = line.strip_prefix('+') {
-            result.push((
-                DiffLineKind::Added,
-                DiffLine {
-                    kind: DiffLineKind::Added,
-                    content: content.to_string(),
-                    old_lineno: None,
-                    new_lineno: Some(new_lineno),
-                },
-            ));
+            result.push(DiffLine {
+                kind: DiffLineKind::Added,
+                content: content.to_string(),
+                old_lineno: None,
+                new_lineno: Some(new_lineno),
+            });
             new_lineno += 1;
         }
         // Other lines (shouldn't appear inside a hunk) are skipped
@@ -147,13 +135,13 @@ fn parse_lines(input: &str) -> Vec<(DiffLineKind, DiffLine)> {
 /// Groups consecutive delete/add runs and pairs them as modifications.
 /// Context lines appear on both sides. Unpaired deletes or adds get a
 /// blank on the opposite side.
-fn lines_to_rows(parsed: Vec<(DiffLineKind, DiffLine)>) -> Vec<SideBySideRow> {
+fn lines_to_rows(parsed: Vec<DiffLine>) -> Vec<SideBySideRow> {
     let mut rows = Vec::new();
     let mut i = 0;
     let mut first_hunk = true;
 
     while i < parsed.len() {
-        let (ref kind, ref line) = parsed[i];
+        let line = &parsed[i];
 
         // Hunk separator sentinel (empty line with no line numbers)
         if line.old_lineno.is_none() && line.new_lineno.is_none() {
@@ -165,7 +153,7 @@ fn lines_to_rows(parsed: Vec<(DiffLineKind, DiffLine)>) -> Vec<SideBySideRow> {
             continue;
         }
 
-        match kind {
+        match line.kind {
             DiffLineKind::Context => {
                 rows.push(SideBySideRow::Line {
                     left: Some(SideContent {
@@ -184,26 +172,26 @@ fn lines_to_rows(parsed: Vec<(DiffLineKind, DiffLine)>) -> Vec<SideBySideRow> {
             DiffLineKind::Deleted => {
                 // Collect consecutive deletes
                 let del_start = i;
-                while i < parsed.len() && parsed[i].0 == DiffLineKind::Deleted {
+                while i < parsed.len() && parsed[i].kind == DiffLineKind::Deleted {
                     i += 1;
                 }
                 let deletes = &parsed[del_start..i];
 
                 // Collect consecutive adds that follow
                 let add_start = i;
-                while i < parsed.len() && parsed[i].0 == DiffLineKind::Added {
+                while i < parsed.len() && parsed[i].kind == DiffLineKind::Added {
                     i += 1;
                 }
                 let adds = &parsed[add_start..i];
 
                 let max_len = deletes.len().max(adds.len());
                 for j in 0..max_len {
-                    let left = deletes.get(j).map(|(_, dl)| SideContent {
+                    let left = deletes.get(j).map(|dl| SideContent {
                         lineno: dl.old_lineno.unwrap(),
                         content: dl.content.clone(),
                         kind: RowKind::Deleted,
                     });
-                    let right = adds.get(j).map(|(_, al)| SideContent {
+                    let right = adds.get(j).map(|al| SideContent {
                         lineno: al.new_lineno.unwrap(),
                         content: al.content.clone(),
                         kind: RowKind::Added,

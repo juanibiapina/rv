@@ -54,7 +54,7 @@ fn run_app(
     files: Vec<git::FileEntry>,
     diff_args: Vec<String>,
 ) -> Result<(), Error> {
-    let mut app: App = App::new(files, diff_args);
+    let mut app = App::new(files, diff_args);
 
     // Load diff for the initially selected file (if any)
     load_diff_for_selected(&mut app)?;

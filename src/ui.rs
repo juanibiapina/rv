@@ -1,4 +1,5 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use unicode_width::UnicodeWidthChar;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph};
@@ -8,19 +9,6 @@ use crate::app::{App, Panel};
 use crate::diff::{RowKind, SideBySideDiff, SideBySideRow};
 use crate::git::FileStatus;
 use crate::tree::VisibleItemKind;
-
-pub fn render(frame: &mut Frame, app: &App) {
-    let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(75),
-        ])
-        .split(frame.area());
-
-    render_file_list(frame, app, chunks[0]);
-    render_diff(frame, app, chunks[1]);
-}
 
 fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
     let is_focused = app.active_panel == Panel::FileList;
@@ -175,7 +163,7 @@ fn render_side_by_side(
                 render_hunk_separator_line(area.width, ln_width, content_width, separator_width)
             }
             SideBySideRow::Line { left, right } => {
-                render_diff_line(left, right, ln_width, content_width, separator_width)
+                render_diff_line(left, right, ln_width, content_width)
             }
         };
 
@@ -222,7 +210,6 @@ fn render_diff_line<'a>(
     right: &Option<crate::diff::SideContent>,
     ln_width: usize,
     content_width: u16,
-    _separator_width: u16,
 ) -> Line<'a> {
     let mut spans = Vec::new();
 
@@ -261,8 +248,8 @@ fn render_side(
             spans.push(Span::raw(" "));
 
             // Content, truncated to fit
-            let text = truncate_to_width(&content.content, content_width as usize);
-            let padding = content_width as usize - text.len();
+            let (text, visual_width) = truncate_to_width(&content.content, content_width as usize);
+            let padding = content_width as usize - visual_width;
             spans.push(Span::styled(text, content_style));
             if padding > 0 {
                 spans.push(Span::styled(" ".repeat(padding), content_style));
@@ -277,11 +264,12 @@ fn render_side(
 }
 
 /// Truncate a string to fit within the given character width.
-fn truncate_to_width(s: &str, max_width: usize) -> String {
+/// Returns the truncated string and its visual width.
+fn truncate_to_width(s: &str, max_width: usize) -> (String, usize) {
     let mut result = String::new();
     let mut width = 0;
     for ch in s.chars() {
-        let ch_width = if ch == '\t' { 4 } else { 1 };
+        let ch_width = if ch == '\t' { 4 } else { ch.width().unwrap_or(0) };
         if width + ch_width > max_width {
             break;
         }
@@ -292,7 +280,7 @@ fn truncate_to_width(s: &str, max_width: usize) -> String {
         }
         width += ch_width;
     }
-    result
+    (result, width)
 }
 
 /// Render a single-line status bar at the bottom.
