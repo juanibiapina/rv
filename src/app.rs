@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::diff::SideBySideDiff;
@@ -16,12 +18,11 @@ pub enum Action {
     None,
     Quit,
     Render,
-    LoadDiff(usize),
 }
 
 pub struct App {
-    pub diff_args: Vec<String>,
     pub files: Vec<FileEntry>,
+    diffs: HashMap<String, SideBySideDiff>,
     pub tree: FileTree,
     pub visible_items: Vec<VisibleItem>,
     pub file_scroll: ScrollState,
@@ -32,12 +33,12 @@ pub struct App {
 }
 
 impl App {
-    pub fn new(files: Vec<FileEntry>, diff_args: Vec<String>) -> Self {
+    pub fn new(files: Vec<FileEntry>, diffs: HashMap<String, SideBySideDiff>) -> Self {
         let tree = FileTree::build(&files);
         let visible_items = tree.visible_items(&files);
         App {
-            diff_args,
             files,
+            diffs,
             tree,
             visible_items,
             file_scroll: ScrollState {
@@ -72,6 +73,33 @@ impl App {
     pub fn set_diff_content(&mut self, content: SideBySideDiff) {
         self.diff_content = Some(content);
         self.diff_scroll.reset();
+    }
+
+    /// Load the diff for the initially selected file (if any).
+    pub fn load_initial_diff(&mut self) {
+        let entry = self.current_entry_index();
+        self.last_selected_file = entry;
+        self.load_diff_for_entry(entry);
+    }
+
+    fn current_entry_index(&self) -> Option<usize> {
+        self.visible_items.get(self.file_scroll.cursor).and_then(|item| {
+            match &item.kind {
+                VisibleItemKind::File { entry_index, .. } => Some(*entry_index),
+                VisibleItemKind::Directory { .. } => None,
+            }
+        })
+    }
+
+    fn load_diff_for_entry(&mut self, entry_index: Option<usize>) {
+        let diff = entry_index
+            .and_then(|idx| self.files.get(idx))
+            .and_then(|f| self.diffs.get(&f.path))
+            .cloned();
+        match diff {
+            Some(d) => self.set_diff_content(d),
+            None => { self.diff_content = None; }
+        }
     }
 
     /// Top-level input handler.
@@ -181,21 +209,11 @@ impl App {
     }
 
     fn check_selection_changed(&mut self) -> Action {
-        let current_file = self.visible_items.get(self.file_scroll.cursor).and_then(|item| {
-            match &item.kind {
-                VisibleItemKind::File { entry_index, .. } => Some(*entry_index),
-                VisibleItemKind::Directory { .. } => None,
-            }
-        });
+        let current_file = self.current_entry_index();
 
         if current_file != self.last_selected_file {
             self.last_selected_file = current_file;
-            if let Some(entry_index) = current_file {
-                return Action::LoadDiff(entry_index);
-            } else {
-                // Moved to a directory — clear diff
-                self.diff_content = None;
-            }
+            self.load_diff_for_entry(current_file);
         }
         Action::Render
     }
@@ -206,10 +224,6 @@ mod tests {
     use super::*;
     use crate::diff::{SideBySideDiff, SideBySideRow, SideContent, RowKind};
     use crate::git::FileStatus;
-
-    fn dummy_diff_args() -> Vec<String> {
-        vec!["diff".into(), "--no-ext-diff".into()]
-    }
 
     /// Create a dummy diff with the given number of rows.
     fn dummy_diff(row_count: usize) -> SideBySideDiff {
@@ -227,7 +241,7 @@ mod tests {
                 }),
             })
             .collect();
-        SideBySideDiff { rows }
+        SideBySideDiff { rows, max_lineno: row_count }
     }
 
     // Tree structure for sample_files():
@@ -253,7 +267,16 @@ mod tests {
     }
 
     fn app_with_files() -> App {
-        App::new(sample_files(), dummy_diff_args())
+        App::new(sample_files(), HashMap::new())
+    }
+
+    fn app_with_diffs() -> App {
+        let files = sample_files();
+        let mut diffs = HashMap::new();
+        for (i, f) in files.iter().enumerate() {
+            diffs.insert(f.path.clone(), dummy_diff(i + 1));
+        }
+        App::new(files, diffs)
     }
 
     // --- App::new tests ---
@@ -267,7 +290,7 @@ mod tests {
 
     #[test]
     fn new_app_empty_files() {
-        let app = App::new(vec![], dummy_diff_args());
+        let app = App::new(vec![], HashMap::new());
         assert_eq!(app.active_panel, Panel::FileList);
         assert!(app.visible_items.is_empty());
         assert!(app.selected_file().is_none());
@@ -284,23 +307,25 @@ mod tests {
 
     #[test]
     fn j_moves_down_through_visible_items() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 10;
         // cursor 0 (dir) → 1 (file, entry_index 0)
         let action = app.handle_key(KeyCode::Char('j'));
         assert_eq!(app.file_scroll.cursor, 1);
-        assert_eq!(action, Action::LoadDiff(0));
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_some());
     }
 
     #[test]
     fn k_moves_up() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 10;
         app.handle_key(KeyCode::Char('j')); // 0→1
         app.handle_key(KeyCode::Char('j')); // 1→2
         let action = app.handle_key(KeyCode::Char('k')); // 2→1
         assert_eq!(app.file_scroll.cursor, 1);
-        assert_eq!(action, Action::LoadDiff(0));
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_some());
     }
 
     #[test]
@@ -367,11 +392,12 @@ mod tests {
 
     #[test]
     fn shift_g_jumps_to_last_visible_item() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 10;
         let action = app.handle_key(KeyCode::Char('G')); // jump to 3 (old.rs)
         assert_eq!(app.file_scroll.cursor, 3);
-        assert_eq!(action, Action::LoadDiff(2));
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_some());
     }
 
     #[test]
@@ -434,10 +460,9 @@ mod tests {
 
     #[test]
     fn moving_to_directory_clears_diff() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 10;
-        app.handle_key(KeyCode::Char('j')); // cursor 1, loads diff
-        app.set_diff_content(dummy_diff(1));
+        app.handle_key(KeyCode::Char('j')); // cursor 1, auto-loads diff
         assert!(app.diff_content.is_some());
         app.handle_key(KeyCode::Char('k')); // cursor 0, directory
         assert!(app.diff_content.is_none());
@@ -445,12 +470,13 @@ mod tests {
 
     #[test]
     fn navigation_skips_collapsed_children() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 10;
         app.handle_key(KeyCode::Enter); // collapse src/
         let action = app.handle_key(KeyCode::Char('j')); // 0→1 (old.rs)
         assert_eq!(app.file_scroll.cursor, 1);
-        assert_eq!(action, Action::LoadDiff(2));
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_some());
     }
 
     #[test]
@@ -466,22 +492,24 @@ mod tests {
 
     #[test]
     fn file_list_page_down() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 2;
         let action = app.handle_key(KeyCode::PageDown);
         assert_eq!(app.file_scroll.cursor, 2);
-        assert_eq!(action, Action::LoadDiff(1));
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_some());
     }
 
     #[test]
     fn file_list_page_up() {
-        let mut app = app_with_files();
+        let mut app = app_with_diffs();
         app.file_scroll.visible_rows = 2;
         app.file_scroll.cursor = 3;
         app.last_selected_file = Some(2);
         let action = app.handle_key(KeyCode::PageUp);
         assert_eq!(app.file_scroll.cursor, 1);
-        assert_eq!(action, Action::LoadDiff(0));
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_some());
     }
 
     // --- Diff panel tests ---

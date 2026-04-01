@@ -49,6 +49,8 @@ pub enum SideBySideRow {
 #[derive(Debug, Clone, PartialEq)]
 pub struct SideBySideDiff {
     pub rows: Vec<SideBySideRow>,
+    /// The highest line number in the diff (for gutter width calculation).
+    pub max_lineno: usize,
 }
 
 /// Parse a hunk header like `@@ -old_start,old_count +new_start,new_count @@`
@@ -221,7 +223,20 @@ fn lines_to_rows(parsed: Vec<DiffLine>) -> Vec<SideBySideRow> {
 pub fn parse_side_by_side(input: &str) -> SideBySideDiff {
     let parsed = parse_lines(input);
     let rows = lines_to_rows(parsed);
-    SideBySideDiff { rows }
+
+    let mut max_lineno: usize = 0;
+    for row in &rows {
+        if let SideBySideRow::Line { left, right } = row {
+            if let Some(s) = left {
+                max_lineno = max_lineno.max(s.lineno);
+            }
+            if let Some(s) = right {
+                max_lineno = max_lineno.max(s.lineno);
+            }
+        }
+    }
+
+    SideBySideDiff { rows, max_lineno }
 }
 
 #[cfg(test)]

@@ -106,22 +106,11 @@ fn render_diff(frame: &mut Frame, app: &App, area: Rect) {
 }
 
 /// Compute the width needed for line number gutters based on max line number.
-fn lineno_width(diff: &SideBySideDiff) -> usize {
-    let mut max_lineno: usize = 0;
-    for row in &diff.rows {
-        if let SideBySideRow::Line { left, right } = row {
-            if let Some(s) = left {
-                max_lineno = max_lineno.max(s.lineno);
-            }
-            if let Some(s) = right {
-                max_lineno = max_lineno.max(s.lineno);
-            }
-        }
-    }
+fn lineno_width(max_lineno: usize) -> usize {
     if max_lineno == 0 {
         1
     } else {
-        max_lineno.to_string().len()
+        max_lineno.ilog10() as usize + 1
     }
 }
 
@@ -135,7 +124,7 @@ fn render_side_by_side(
         return;
     }
 
-    let ln_width = lineno_width(diff);
+    let ln_width = lineno_width(diff.max_lineno);
     // separator is 3 chars: " │ "
     let separator_width: u16 = 3;
     let ln_col_width = ln_width as u16;

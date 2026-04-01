@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::io;
 use std::time::Duration;
 
@@ -30,6 +31,12 @@ fn run() -> Result<(), Error> {
     let diff_args = git::worktree_diff_args();
     let files = git::changed_files(&diff_args)?;
 
+    let raw_diffs = git::all_file_diffs(&diff_args)?;
+    let diffs: HashMap<String, _> = raw_diffs
+        .into_iter()
+        .map(|(path, raw)| (path, diff::parse_side_by_side(&raw)))
+        .collect();
+
     // Set up terminal
     enable_raw_mode().map_err(|e| Error::Git(format!("terminal: {}", e)))?;
     let mut stdout = io::stdout();
@@ -39,7 +46,7 @@ fn run() -> Result<(), Error> {
         Terminal::new(backend).map_err(|e| Error::Git(format!("terminal: {}", e)))?;
 
     // Run the app (restore terminal on any exit path)
-    let result = run_app(&mut terminal, files, diff_args);
+    let result = run_app(&mut terminal, files, diffs);
 
     // Restore terminal
     disable_raw_mode().ok();
@@ -52,12 +59,10 @@ fn run() -> Result<(), Error> {
 fn run_app(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     files: Vec<git::FileEntry>,
-    diff_args: Vec<String>,
+    diffs: HashMap<String, rv::diff::SideBySideDiff>,
 ) -> Result<(), Error> {
-    let mut app = App::new(files, diff_args);
-
-    // Load diff for the initially selected file (if any)
-    load_diff_for_selected(&mut app)?;
+    let mut app = App::new(files, diffs);
+    app.load_initial_diff();
 
     loop {
         // Update visible rows based on terminal size
@@ -87,9 +92,6 @@ fn run_app(
 
                 match app.handle_key_event(key) {
                     Action::Quit => break,
-                    Action::LoadDiff(_idx) => {
-                        load_diff_for_selected(&mut app)?;
-                    }
                     Action::Render | Action::None => {}
                 }
             }
@@ -99,12 +101,3 @@ fn run_app(
     Ok(())
 }
 
-fn load_diff_for_selected(app: &mut App) -> Result<(), Error> {
-    if let Some(file) = app.selected_file() {
-        let path = file.path.clone();
-        let raw = git::file_diff(&app.diff_args, &path)?;
-        let parsed = diff::parse_side_by_side(&raw);
-        app.set_diff_content(parsed);
-    }
-    Ok(())
-}
