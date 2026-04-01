@@ -3,6 +3,7 @@ use ratatui::text::Text;
 
 use crate::git::FileEntry;
 use crate::scroll::ScrollState;
+use crate::tree::{FileTree, VisibleItem, VisibleItemKind};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Panel {
@@ -20,18 +21,21 @@ pub enum Action {
 
 pub struct App<'a> {
     pub files: Vec<FileEntry>,
+    pub tree: FileTree,
+    pub visible_items: Vec<VisibleItem>,
     pub file_scroll: ScrollState,
     pub diff_scroll: ScrollState,
     pub active_panel: Panel,
     pub diff_content: Option<Text<'a>>,
     pub diff_line_count: usize,
     pub description: String,
-    last_selected: Option<usize>,
+    last_selected_file: Option<usize>,
 }
 
 impl<'a> App<'a> {
     pub fn new(files: Vec<FileEntry>, description: String) -> Self {
-        let initial_selected = if files.is_empty() { None } else { Some(0) };
+        let tree = FileTree::build(&files);
+        let visible_items = tree.visible_items(&files);
         App {
             file_scroll: ScrollState {
                 cursor: 0,
@@ -43,17 +47,23 @@ impl<'a> App<'a> {
                 offset: 0,
                 visible_rows: 0,
             },
+            tree,
+            visible_items,
             files,
             active_panel: Panel::FileList,
             diff_content: None,
             diff_line_count: 0,
             description,
-            last_selected: initial_selected,
+            last_selected_file: None,
         }
     }
 
     pub fn selected_file(&self) -> Option<&FileEntry> {
-        self.files.get(self.file_scroll.cursor)
+        let item = self.visible_items.get(self.file_scroll.cursor)?;
+        match &item.kind {
+            VisibleItemKind::File { entry_index, .. } => self.files.get(*entry_index),
+            VisibleItemKind::Directory { .. } => None,
+        }
     }
 
     pub fn set_diff_content(&mut self, content: Text<'a>, line_count: usize) {
@@ -75,7 +85,7 @@ impl<'a> App<'a> {
         match key {
             KeyCode::Char('q') | KeyCode::Esc => Action::Quit,
             KeyCode::Char('j') | KeyCode::Down => {
-                self.file_scroll.down(self.files.len());
+                self.file_scroll.down(self.visible_items.len());
                 self.check_selection_changed()
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -87,8 +97,19 @@ impl<'a> App<'a> {
                 self.check_selection_changed()
             }
             KeyCode::Char('G') | KeyCode::End => {
-                self.file_scroll.last(self.files.len());
+                self.file_scroll.last(self.visible_items.len());
                 self.check_selection_changed()
+            }
+            KeyCode::Enter => {
+                let cursor = self.file_scroll.cursor;
+                let is_dir = self.visible_items.get(cursor)
+                    .map_or(false, |item| matches!(item.kind, VisibleItemKind::Directory { .. }));
+                if is_dir {
+                    self.tree.toggle_at_visible(cursor);
+                    self.visible_items = self.tree.visible_items(&self.files);
+                    self.file_scroll.clamp(self.visible_items.len());
+                }
+                Action::Render
             }
             KeyCode::Tab => {
                 if self.diff_content.is_some() {
@@ -135,11 +156,21 @@ impl<'a> App<'a> {
     }
 
     fn check_selection_changed(&mut self) -> Action {
-        let current = Some(self.file_scroll.cursor);
-        if current != self.last_selected {
-            self.last_selected = current;
-            if let Some(idx) = current {
-                return Action::LoadDiff(idx);
+        let current_file = self.visible_items.get(self.file_scroll.cursor).and_then(|item| {
+            match &item.kind {
+                VisibleItemKind::File { entry_index, .. } => Some(*entry_index),
+                VisibleItemKind::Directory { .. } => None,
+            }
+        });
+
+        if current_file != self.last_selected_file {
+            self.last_selected_file = current_file;
+            if let Some(entry_index) = current_file {
+                return Action::LoadDiff(entry_index);
+            } else {
+                // Moved to a directory — clear diff
+                self.diff_content = None;
+                self.diff_line_count = 0;
             }
         }
         Action::Render
@@ -151,6 +182,11 @@ mod tests {
     use super::*;
     use crate::git::FileStatus;
 
+    // Tree structure for sample_files():
+    //   0: ▼ src/        (directory)
+    //   1:   A main.rs   (entry_index 0)
+    //   2:   M lib.rs    (entry_index 1)
+    //   3: D old.rs      (entry_index 2)
     fn sample_files() -> Vec<FileEntry> {
         vec![
             FileEntry {
@@ -169,11 +205,12 @@ mod tests {
     }
 
     #[test]
-    fn new_app_selects_first_file() {
+    fn new_app_starts_on_first_visible_item() {
         let app = App::new(sample_files(), "test".into());
         assert_eq!(app.file_scroll.cursor, 0);
         assert_eq!(app.active_panel, Panel::FileList);
-        assert_eq!(app.selected_file().unwrap().path, "src/main.rs");
+        // Cursor is on directory, so no file selected
+        assert!(app.selected_file().is_none());
     }
 
     #[test]
@@ -183,23 +220,25 @@ mod tests {
     }
 
     #[test]
-    fn j_moves_selection_down() {
+    fn j_moves_down_through_visible_items() {
         let mut app = App::new(sample_files(), "test".into());
         app.file_scroll.visible_rows = 10;
-        // First file is auto-selected, so moving down should load the second
+        // cursor 0 (dir) → 1 (file, entry_index 0)
         let action = app.handle_key(KeyCode::Char('j'));
-        assert_eq!(action, Action::LoadDiff(1));
         assert_eq!(app.file_scroll.cursor, 1);
+        assert_eq!(action, Action::LoadDiff(0));
     }
 
     #[test]
-    fn k_moves_selection_up() {
+    fn k_moves_up() {
         let mut app = App::new(sample_files(), "test".into());
         app.file_scroll.visible_rows = 10;
-        app.handle_key(KeyCode::Char('j')); // move to 1
-        let action = app.handle_key(KeyCode::Char('k'));
+        app.handle_key(KeyCode::Char('j')); // 0→1 (file, loads diff)
+        app.handle_key(KeyCode::Char('j')); // 1→2 (file, loads diff)
+        let action = app.handle_key(KeyCode::Char('k')); // 2→1
+        // entry_index 0 again, same as last visit to position 1
+        assert_eq!(app.file_scroll.cursor, 1);
         assert_eq!(action, Action::LoadDiff(0));
-        assert_eq!(app.file_scroll.cursor, 0);
     }
 
     #[test]
@@ -208,9 +247,10 @@ mod tests {
         app.file_scroll.visible_rows = 10;
         app.handle_key(KeyCode::Char('j')); // 1
         app.handle_key(KeyCode::Char('j')); // 2
-        let action = app.handle_key(KeyCode::Char('j')); // stays at 2
-        assert_eq!(action, Action::Render); // no change = Render, not LoadDiff
-        assert_eq!(app.file_scroll.cursor, 2);
+        app.handle_key(KeyCode::Char('j')); // 3
+        let action = app.handle_key(KeyCode::Char('j')); // stays at 3
+        assert_eq!(action, Action::Render);
+        assert_eq!(app.file_scroll.cursor, 3);
     }
 
     #[test]
@@ -283,22 +323,85 @@ mod tests {
     }
 
     #[test]
-    fn g_jumps_to_first_file() {
+    fn g_jumps_to_first_visible_item() {
         let mut app = App::new(sample_files(), "test".into());
         app.file_scroll.visible_rows = 10;
-        app.handle_key(KeyCode::Char('j'));
-        app.handle_key(KeyCode::Char('j'));
-        let action = app.handle_key(KeyCode::Char('g'));
-        assert_eq!(action, Action::LoadDiff(0));
+        app.handle_key(KeyCode::Char('j')); // 1 (file)
+        app.handle_key(KeyCode::Char('j')); // 2 (file)
+        app.handle_key(KeyCode::Char('j')); // 3 (file)
+        let action = app.handle_key(KeyCode::Char('g')); // back to 0 (dir)
         assert_eq!(app.file_scroll.cursor, 0);
+        // Moved to directory, clears diff
+        assert_eq!(action, Action::Render);
+        assert!(app.diff_content.is_none());
     }
 
     #[test]
-    fn shift_g_jumps_to_last_file() {
+    fn shift_g_jumps_to_last_visible_item() {
         let mut app = App::new(sample_files(), "test".into());
         app.file_scroll.visible_rows = 10;
-        let action = app.handle_key(KeyCode::Char('G'));
-        assert_eq!(action, Action::LoadDiff(2));
-        assert_eq!(app.file_scroll.cursor, 2);
+        let action = app.handle_key(KeyCode::Char('G')); // jump to 3 (old.rs)
+        assert_eq!(app.file_scroll.cursor, 3);
+        assert_eq!(action, Action::LoadDiff(2)); // entry_index 2
+    }
+
+    #[test]
+    fn enter_toggles_directory() {
+        let mut app = App::new(sample_files(), "test".into());
+        app.file_scroll.visible_rows = 10;
+        // Cursor at 0 = src/ directory, 4 visible items
+        assert_eq!(app.visible_items.len(), 4);
+        let action = app.handle_key(KeyCode::Enter);
+        assert_eq!(action, Action::Render);
+        assert_eq!(app.visible_items.len(), 2); // src/ (collapsed), old.rs
+    }
+
+    #[test]
+    fn enter_on_file_is_noop() {
+        let mut app = App::new(sample_files(), "test".into());
+        app.file_scroll.visible_rows = 10;
+        app.handle_key(KeyCode::Char('j')); // cursor to 1 (file)
+        let before = app.visible_items.len();
+        let action = app.handle_key(KeyCode::Enter);
+        assert_eq!(action, Action::Render);
+        assert_eq!(app.visible_items.len(), before);
+    }
+
+    #[test]
+    fn selected_file_on_directory_returns_none() {
+        let app = App::new(sample_files(), "test".into());
+        // cursor at 0 = directory
+        assert!(app.selected_file().is_none());
+    }
+
+    #[test]
+    fn selected_file_on_file_returns_entry() {
+        let mut app = App::new(sample_files(), "test".into());
+        app.file_scroll.visible_rows = 10;
+        app.handle_key(KeyCode::Char('j')); // cursor to 1 (main.rs)
+        let file = app.selected_file().unwrap();
+        assert_eq!(file.path, "src/main.rs");
+    }
+
+    #[test]
+    fn moving_to_directory_clears_diff() {
+        let mut app = App::new(sample_files(), "test".into());
+        app.file_scroll.visible_rows = 10;
+        app.handle_key(KeyCode::Char('j')); // cursor 1, loads diff
+        app.set_diff_content(Text::raw("diff"), 1);
+        assert!(app.diff_content.is_some());
+        app.handle_key(KeyCode::Char('k')); // cursor 0, directory
+        assert!(app.diff_content.is_none());
+    }
+
+    #[test]
+    fn navigation_skips_collapsed_children() {
+        let mut app = App::new(sample_files(), "test".into());
+        app.file_scroll.visible_rows = 10;
+        app.handle_key(KeyCode::Enter); // collapse src/
+        // visible: src/ (0), old.rs (1)
+        let action = app.handle_key(KeyCode::Char('j')); // 0→1 (old.rs)
+        assert_eq!(app.file_scroll.cursor, 1);
+        assert_eq!(action, Action::LoadDiff(2)); // old.rs = entry_index 2
     }
 }

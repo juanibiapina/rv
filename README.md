@@ -32,6 +32,7 @@ If the working tree is dirty, it shows uncommitted changes (staged + unstaged). 
 | `k` / `Up` | Previous file |
 | `g` / `Home` | First file |
 | `G` / `End` | Last file |
+| `Enter` | Toggle expand/collapse directory |
 | `Tab` | Switch to diff panel |
 | `q` / `Esc` | Quit |
 

@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::app::{App, Panel};
 use crate::git::FileStatus;
+use crate::tree::VisibleItemKind;
 
 pub fn render(frame: &mut Frame, app: &App) {
     let chunks = Layout::default()
@@ -31,18 +32,39 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(border_style);
 
-    let items: Vec<ListItem> = app
-        .files
+    let (start, end) = app.file_scroll.visible_range(app.visible_items.len());
+
+    let items: Vec<ListItem> = app.visible_items[start..end]
         .iter()
         .enumerate()
-        .map(|(i, file)| {
-            let status_color = match file.status {
-                FileStatus::Added => Color::Green,
-                FileStatus::Modified => Color::Yellow,
-                FileStatus::Deleted => Color::Red,
+        .map(|(i, item)| {
+            let is_selected = (start + i) == app.file_scroll.cursor;
+            let indent = "  ".repeat(item.depth);
+
+            let line = match &item.kind {
+                VisibleItemKind::Directory { expanded } => {
+                    let indicator = if *expanded { "\u{25bc}" } else { "\u{25b6}" };
+                    Line::from(vec![
+                        Span::raw(format!("{}{} {}/", indent, indicator, item.name)),
+                    ])
+                }
+                VisibleItemKind::File { status, .. } => {
+                    let status_color = match status {
+                        FileStatus::Added => Color::Green,
+                        FileStatus::Modified => Color::Yellow,
+                        FileStatus::Deleted => Color::Red,
+                    };
+                    Line::from(vec![
+                        Span::raw(indent),
+                        Span::styled(
+                            format!("{} ", status),
+                            Style::default().fg(status_color),
+                        ),
+                        Span::raw(&item.name),
+                    ])
+                }
             };
 
-            let is_selected = i == app.file_scroll.cursor;
             let style = if is_selected {
                 Style::default()
                     .bg(Color::DarkGray)
@@ -50,11 +72,6 @@ fn render_file_list(frame: &mut Frame, app: &App, area: Rect) {
             } else {
                 Style::default()
             };
-
-            let line = Line::from(vec![
-                Span::styled(format!("{} ", file.status), Style::default().fg(status_color)),
-                Span::styled(&file.path, style),
-            ]);
 
             ListItem::new(line).style(style)
         })
